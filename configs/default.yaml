@@ -1,0 +1,119 @@
+# Central configuration. All paths are relative to the project root.
+random_seed: 42
+
+paths:
+  raw_data_dir: Data            # original CSVs; read-only, never written to
+  processed_dir: processed_data  # derived tables; NOT under Data/ (Windows paths are case-insensitive)
+  reports_dir: reports
+
+ingestion:
+  filename_regex: '^Sub(?P<pid>\d+)(?P<leg>Left|Right)(?:\((?P<note>.*)\))?\.csv$'
+  time_column_regex: '^time'
+  expected_cutoff_fraction: 0.95   # recording shorter than this x cohort-median duration => "abrupt cutoff" warning
+  gap_factor: 1.5                  # dt > gap_factor * median dt counts as a gap
+  saturation:
+    min_count: 10                  # extreme value must repeat >= this often (pooled over sensor family) to be called an observed rail value
+    rel_tol: 0.0001                # tolerance relative to the rail value (audit: 0.001 flagged 6 non-rail gyro samples; 0.0001 = about 1 count)
+  robust_z_extreme: 8.0            # |robust z| above this flagged as extreme (per channel, per recording)
+
+processing:
+  # Decisions are logged per recording in reports/processing_log.json
+  regularize_to_uniform_grid: true  # fill dropped samples by linear interpolation (flagged, counted)
+  gravity_cutoff_hz: 0.3            # low-pass cutoff used to ESTIMATE gravity/posture component of accelerometer
+  lowpass_hz: null                  # null = features computed on unfiltered signals. Set e.g. 15 to enable.
+  comparison_lowpass_hz: 10         # used only for the raw-vs-processed comparison figure
+  filter_order: 4
+  window_s: 2.0
+  overlap: 0.5
+  incomplete_final_window: drop     # drop | align_end (extra full-length window ending at last sample)
+  fallback_window_samples: 100      # only used if no verified sampling frequency exists
+  max_interpolated_fraction_per_window: 0.1
+
+features:
+  quantiles: [0.05, 0.25, 0.5, 0.75, 0.95]
+  min_samples_for_spectrum: 64
+  spectrum_min_freq_hz: 0.3         # excludes DC / very-low-frequency drift when picking dominant frequency
+  low_band_upper_hz: 3.0            # descriptive partition of spectral power; NOT a claim about gait band
+
+statistics:
+  alpha: 0.05
+  normality_alpha: 0.05
+  n_bootstrap: 5000
+  min_pairs: 5
+  headline_features:
+    - gyro_mag__rms
+    - acc_dyn_mag__rms
+    - acc_mag__std
+    - gyro_mag__dominant_freq_hz
+    - acc_dyn_mag__dominant_freq_hz
+    - acc_y__mean
+
+eda:
+  representative_n: 3               # participants chosen automatically by gyro-magnitude RMS (min / median / max)
+  dpi: 130
+
+models:
+  run_anomaly: true
+  run_clustering: true
+  run_lr_classification: true
+  anomaly_contamination: 0.05
+  lof_neighbors: 20
+  n_top_anomalies: 15
+  kmeans_k_range: [2, 3, 4, 5]
+  stability_repeats: 30
+  stability_subsample: 0.8
+  permutations: 1000                # Monte Carlo draws, used only if exact enumeration is not feasible
+  permutation_mode: exact           # exact = enumerate all 2**n participant label swaps (4096 for 12 participants)
+  permutation_exact_max: 5000       # largest 2**n for which exact enumeration is allowed
+  feature_stat_whitelist: [mean, std, rms, ptp, dominant_freq_hz, spectral_centroid_hz, zcr_hz]  # + all corr__* ; keeps redundant stats from dominating
+  min_participants_for_models: 8
+
+# ---------------------------------------------------------------------------------------------------------------
+# Hardware and collection metadata. Every item carries its provenance:
+#   source: hardware_collaborator = reported by the person responsible for the hardware (NOT independently verified)
+#   verification: how/whether it was checked against the CSV files (see reports/audit/hardware_*.csv)
+# Raw register values, firmware and board photographs are NOT available, so firmware behaviour is unverified.
+# ---------------------------------------------------------------------------------------------------------------
+hardware:
+  source: hardware_collaborator
+  microcontroller: ESP32
+  imu_module: GY-521
+  imu_chip: MPU6050
+  interface: I2C
+  gpio_sda: 21
+  gpio_scl: 22
+  accel_range_g: 2                  # +-2 g
+  gyro_range_dps: 250               # +-250 deg/s
+  sampling_interval_s: 0.02
+  sampling_frequency_hz: 50
+  recording_duration_s: 10          # "approximately"
+  expected_samples: 500             # "approximately"
+  expected_samples_tolerance: 5     # |rows - expected| above this is flagged (the collaborator said "approximately")
+  conversion:                       # documented firmware formulas: value = raw / divisor
+    accel_lsb_per_g: 16384
+    gyro_lsb_per_dps: 131
+  raw_int16_min: -32768
+  raw_int16_max: 32767
+  csv_decimals: {accel: 4, gyro: 3}  # observed from the CSV text, not from the collaborator
+
+protocol:                           # collaborator-reported; not independently verified
+  source: hardware_collaborator
+  mounting: "shin, about one breadboard-length below the knee"
+  orientation: "module inverted, top facing the ground (board markings/axis mapping NOT confirmed)"
+  same_sensor_for_both_legs: true
+  surface: flat
+  footwear: barefoot
+  duration_per_leg_s: 10
+  warning_before_walking_s: 3
+  first_step: "leg opposite to the sensor leg"
+  consistent_across_participants: "stated by collaborator; not verifiable from the data"
+  recorded_not_known: [recording order of legs, sensor re-mounting details between legs, walking speed, trial repeats]
+  movement_onset_rms_threshold_dps: 50   # heuristic used only to report when movement starts in each recording
+
+participant_metadata:               # collaborator-provided; not independently verified; no severity/diagnosis/side/timing known
+  source: hardware_collaborator
+  verification: "not verified; no clinical records, severity, side, date or recovery status available"
+  conditions:
+    Sub04: "ACL recovery history"
+    Sub06: "ankle-twist history"
+  default_description: "described as healthy (a descriptor, not a verified clinical status)"
